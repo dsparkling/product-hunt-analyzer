@@ -15,6 +15,8 @@ on:
 jobs:
   analyze-product-hunt:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 允许写入仓库内容
     
     steps:
     - name: Checkout repository
