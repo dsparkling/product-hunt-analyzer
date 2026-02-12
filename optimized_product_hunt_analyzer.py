@@ -19,16 +19,26 @@ import concurrent.futures
 from dataclasses import dataclass, asdict
 import random
 
+# 配置日志（兼容Windows）
+import sys
+import io
+
+# 设置标准输出编码为UTF-8（解决Windows控制台emoji显示问题）
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('product_hunt_analysis.log'),
+        logging.FileHandler('product_hunt_analysis.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class ProductInfo:
@@ -42,7 +52,7 @@ class ProductInfo:
     website_url: str = ""
     producthunt_url: str = ""
     tagline: str = ""
-    
+
     # 深度分析字段
     core_feature: str = ""
     pain_point: str = ""
@@ -53,15 +63,16 @@ class ProductInfo:
     strengths: str = ""
     weaknesses: str = ""
     market_potential: int = 0  # 0-100评分
-    expert_rating: str = ""   # ⭐⭐⭐⭐⭐
-    
+    expert_rating: str = ""  # ⭐⭐⭐⭐⭐
+
     def __post_init__(self):
         if self.competitors is None:
             self.competitors = []
 
+
 class OptimizedProductHuntAnalyzer:
     """优化版Product Hunt分析器（基于Coze报告格式）"""
-    
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -73,9 +84,9 @@ class OptimizedProductHuntAnalyzer:
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
         })
-        
+
         self.base_url = "https://decohack.com/producthunt-daily"
-        
+
         # 优化后的分类体系
         self.product_categories = {
             'AI驱动工具': ['ai', 'ml', 'artificial intelligence', 'chatgpt', 'claude'],
@@ -89,7 +100,7 @@ class OptimizedProductHuntAnalyzer:
             '金融商务工具': ['finance', 'business', 'payment', 'banking'],
             '娱乐休闲工具': ['entertainment', 'game', 'fun', 'music', 'video']
         }
-        
+
         # 示例数据（优化版）
         self.fallback_products = [
             {
@@ -123,16 +134,16 @@ class OptimizedProductHuntAnalyzer:
                 'tagline': '智能文档协作，让想法流畅表达'
             }
         ]
-        
+
     def get_daily_url(self, date: datetime = None) -> str:
         """获取指定日期的Product Hunt榜单URL"""
         if date is None:
             date = datetime.now()
-        
+
         yesterday = date - timedelta(days=1)
         date_str = yesterday.strftime("%Y-%m-%d")
         return f"{self.base_url}-{date_str}"
-    
+
     def test_connectivity(self) -> bool:
         """测试网络连接性"""
         try:
@@ -141,96 +152,131 @@ class OptimizedProductHuntAnalyzer:
         except Exception as e:
             logger.warning(f"网络连接测试失败: {str(e)}")
             return False
-    
+
     def fetch_daily_hot(self, date: datetime = None) -> List[Dict]:
         """爬取Product Hunt每日热门榜单（优化版）"""
         try:
             if not self.test_connectivity():
                 logger.warning("网络连接不可用，使用示例数据")
                 return self.fallback_products
-            
+
             url = self.get_daily_url(date)
             logger.info(f"正在爬取Product Hunt榜单: {url}")
-            
+
             response = self.session.get(url, timeout=30)
             response.raise_for_status()
-            
+
             soup = BeautifulSoup(response.content, 'html.parser')
             products = []
-            
-            # 多种选择器策略（增强版）
+
+            # 方法1：尝试多种选择器策略
             selectors = [
                 '.product-item',
-                '.hot-product', 
+                '.hot-product',
                 '.product-card',
                 '.daily-product',
                 '[data-product]',
                 '.entry-content .product',
                 '.ph-daily-product',
                 '.product-grid .product',
-                '.featured-product'
+                '.featured-product',
+                'article',
+                '.post-content'
             ]
-            
+
             product_elements = []
             for selector in selectors:
                 elements = soup.select(selector)
-                if elements:
+                if elements and len(elements) >= 10:  # 至少有10个产品
                     product_elements = elements
                     logger.info(f"找到 {len(elements)} 个产品元素，使用选择器: {selector}")
                     break
-            
-            # 提取产品信息
-            for i, element in enumerate(product_elements[:15], 1):  # 优化：分析15个产品
+
+            # 方法2：如果选择器没找到足够产品，尝试按hr分隔获取
+            if not product_elements or len(product_elements) < 10:
+                # 查找所有包含产品链接的div/li元素
+                all_links = soup.find_all('a', href=True)
+                product_links = []
+
+                for link in all_links:
+                    href = link.get('href', '')
+                    text = link.get_text().strip()
+                    # 过滤Product Hunt链接
+                    if 'producthunt.com' in href or 'ph/' in href:
+                        if text and len(text) > 2:
+                            parent = link.find_parent(['div', 'li', 'article'])
+                            if parent:
+                                product_links.append(parent)
+
+                if product_links:
+                    product_elements = product_links
+                    logger.info(f"通过链接分析找到 {len(product_elements)} 个产品")
+
+            # 方法3：查找包含🔺符号的元素（票数）
+            if not product_elements or len(product_elements) < 10:
+                vote_elements = soup.find_all(string=lambda text: text and '🔺' in text if text else False)
+                product_elements = []
+                for vote_text in vote_elements:
+                    parent = vote_text.find_parent()
+                    while parent and parent.name not in ['div', 'li', 'article', 'section']:
+                        parent = parent.find_parent()
+                    if parent and parent not in product_elements:
+                        product_elements.append(parent)
+
+                logger.info(f"通过票数符号找到 {len(product_elements)} 个产品")
+
+            # 提取产品信息（增加到30个）
+            for i, element in enumerate(product_elements[:30], 1):  # 提取全部30个产品
                 product_data = self.extract_enhanced_product_info(element, i)
                 if product_data and product_data.get('name'):
                     products.append(product_data)
-            
+
             # 如果提取失败，使用示例数据
             if not products:
                 logger.warning("无法提取产品信息，使用示例数据")
                 return self.fallback_products
-            
+
             logger.info(f"成功提取 {len(products)} 个产品信息")
             return products
-            
+
         except Exception as e:
             logger.error(f"爬取Product Hunt榜单失败: {str(e)}")
             logger.info("使用示例数据继续分析")
             return self.fallback_products
-    
+
     def extract_enhanced_product_info(self, element, rank: int) -> Optional[Dict]:
         """提取增强的产品信息"""
         try:
             # 提取产品名称
             name_selectors = ['h1', 'h2', 'h3', 'h4', '.product-name', '.title', '.product-title', 'strong']
             name = ""
-            
+
             for selector in name_selectors:
                 name_elem = element.select_one(selector)
                 if name_elem:
                     name = name_elem.get_text().strip()
                     break
-            
+
             if not name:
                 text_content = element.get_text().strip()
                 lines = [line.strip() for line in text_content.split('\n') if line.strip()]
                 if lines:
                     name = lines[0]
-            
+
             # 清理名称
             name = re.sub(r'^\d+\.\s*', '', name)
             name = re.sub(r'^#\d+\s*', '', name)
-            
+
             # 提取描述
             desc_selectors = ['p', '.description', '.summary', '.product-description', '.excerpt']
             description = ""
-            
+
             for selector in desc_selectors:
                 desc_elem = element.select_one(selector)
                 if desc_elem:
                     description = desc_elem.get_text().strip()
                     break
-            
+
             # 提取票数（如果有）
             votes = 0
             vote_patterns = [r'(\d+)\s*票', r'(\d+)\s*votes', r'(\d+)\s*votes?']
@@ -240,7 +286,7 @@ class OptimizedProductHuntAnalyzer:
                 if match:
                     votes = int(match.group(1))
                     break
-            
+
             # 提取图片URL
             img_elem = element.select_one('img')
             image_url = ""
@@ -248,7 +294,7 @@ class OptimizedProductHuntAnalyzer:
                 image_url = img_elem.get('src', '')
                 if image_url and not image_url.startswith('http'):
                     image_url = urljoin('https://decohack.com', image_url)
-            
+
             # 提取链接
             link_elem = element.select_one('a')
             website_url = ""
@@ -256,20 +302,20 @@ class OptimizedProductHuntAnalyzer:
                 website_url = link_elem.get('href', '')
                 if website_url and not website_url.startswith('http'):
                     website_url = urljoin('https://decohack.com', website_url)
-            
+
             # 提取标语
             tagline = ""
             if name and description:
                 # 使用描述的前半部分作为标语
                 tagline = description[:50] + "..." if len(description) > 50 else description
-            
+
             # 验证数据
             if not name or len(name) < 2:
                 return None
-            
+
             # 自动分类
             category = self.classify_product(name + " " + description)
-            
+
             return {
                 'rank': rank,
                 'name': name,
@@ -280,22 +326,22 @@ class OptimizedProductHuntAnalyzer:
                 'website_url': website_url,
                 'tagline': tagline
             }
-            
+
         except Exception as e:
             logger.error(f"提取产品基本信息失败: {str(e)}")
             return None
-    
+
     def classify_product(self, text: str) -> str:
         """自动产品分类"""
         text_lower = text.lower()
-        
+
         for category, keywords in self.product_categories.items():
             for keyword in keywords:
                 if keyword in text_lower:
                     return category
-        
+
         return "其他工具"
-    
+
     def enhance_product_info(self, product_data: Dict) -> ProductInfo:
         """深度增强产品信息"""
         try:
@@ -309,7 +355,7 @@ class OptimizedProductHuntAnalyzer:
                 website_url=product_data['website_url'],
                 tagline=product_data.get('tagline', '')
             )
-            
+
             # 深度分析各个维度
             product_info.core_feature = self.analyze_core_feature(product_info)
             product_info.pain_point = self.analyze_pain_point(product_info)
@@ -321,18 +367,18 @@ class OptimizedProductHuntAnalyzer:
             product_info.weaknesses = self.analyze_weaknesses(product_info)
             product_info.market_potential = self.calculate_market_potential(product_info)
             product_info.expert_rating = self.generate_expert_rating(product_info.market_potential)
-            
+
             return product_info
-            
+
         except Exception as e:
             logger.error(f"增强产品信息失败: {str(e)}")
             return ProductInfo(**product_data)
-    
+
     def analyze_core_feature(self, product_info: ProductInfo) -> str:
         """分析核心功能"""
         name = product_info.name.lower()
         desc = product_info.description.lower()
-        
+
         if any(keyword in name + desc for keyword in ['ai', 'ml', 'artificial intelligence']):
             return "AI驱动的智能化功能，能够自动处理复杂任务"
         elif any(keyword in name + desc for keyword in ['collaboration', 'team', 'sharing']):
@@ -343,12 +389,12 @@ class OptimizedProductHuntAnalyzer:
             return "创意设计和视觉表达功能"
         else:
             return "核心功能聚焦于提升用户工作效率和体验"
-    
+
     def analyze_pain_point(self, product_info: ProductInfo) -> str:
         """分析解决的核心痛点"""
         name = product_info.name.lower()
         desc = product_info.description.lower()
-        
+
         if 'ai' in name + desc:
             return "解决传统方法效率低下、人工成本高的问题"
         elif any(keyword in name + desc for keyword in ['design', 'figma']):
@@ -357,11 +403,11 @@ class OptimizedProductHuntAnalyzer:
             return "提升开发团队协作效率，简化代码管理流程"
         else:
             return f"针对{product_info.category}领域的特定需求痛点提供解决方案"
-    
+
     def analyze_target_audience(self, product_info: ProductInfo) -> str:
         """分析目标受众群体"""
         category = product_info.category
-        
+
         audience_map = {
             'AI驱动工具': "AI技术人员、产品经理、创新型企业家",
             '生产力增强器': "办公室职员、创业团队、远程工作者",
@@ -370,13 +416,13 @@ class OptimizedProductHuntAnalyzer:
             '项目管理工具': "项目经理、敏捷教练、团队协调员",
             '营销推广工具': "市场营销人员、内容创作者、数字营销团队"
         }
-        
+
         return audience_map.get(category, "科技行业从业者、创新产品早期采用者")
-    
+
     def identify_competitors(self, product_info: ProductInfo) -> List[str]:
         """识别主要竞争产品"""
         category = product_info.category
-        
+
         competitor_map = {
             'AI驱动工具': ['ChatGPT', 'Claude', 'GPT-4', 'Bard'],
             '开发编程工具': ['GitHub', 'GitLab', 'Bitbucket', 'SourceTree'],
@@ -384,20 +430,20 @@ class OptimizedProductHuntAnalyzer:
             '项目管理工具': ['Notion', 'Trello', 'Asana', 'Monday.com'],
             '生产力增强器': ['Slack', 'Microsoft Teams', 'Discord', 'Zoom']
         }
-        
+
         return competitor_map.get(category, ['竞品A', '竞品B', '竞品C'])
-    
+
     def analyze_business_model(self, product_info: ProductInfo) -> str:
         """分析商业模式"""
         category = product_info.category
-        
+
         if 'AI' in category:
             return "订阅制SaaS模式，提供不同功能层级"
         elif category in ['开发编程工具', '项目管理工具']:
             return "freemium模式，基础功能免费，高级功能付费"
         else:
             return "多元化商业模式，结合订阅制和一次性购买"
-    
+
     def analyze_pricing_model(self, product_info: ProductInfo) -> str:
         """分析定价策略"""
         # 基于投票数和市场定位推断
@@ -407,46 +453,46 @@ class OptimizedProductHuntAnalyzer:
             return "中等市场认可，采用标准定价"
         else:
             return "早期产品阶段，采用价值定价策略"
-    
+
     def analyze_strengths(self, product_info: ProductInfo) -> str:
         """分析产品优势"""
         strengths = []
-        
+
         if 'AI' in product_info.category:
             strengths.append("技术先进性和AI能力")
         if product_info.votes > 300:
             strengths.append("用户认可度高")
         if len(product_info.competitors) > 0:
             strengths.append("竞争差异化明显")
-        
+
         if not strengths:
             strengths.append("产品定位清晰")
             strengths.append("用户体验优良")
-        
+
         return "、".join(strengths)
-    
+
     def analyze_weaknesses(self, product_info: ProductInfo) -> str:
         """分析产品不足"""
         category = product_info.category
-        
+
         weakness_map = {
             'AI驱动工具': "计算资源消耗大，对数据质量要求高",
             '开发编程工具': "学习曲线较陡峭，需要团队适应时间",
             '设计创意工具': "功能复杂度高，新手用户门槛较高"
         }
-        
+
         base_weakness = "作为新兴产品，在市场教育和生态系统建设方面仍有提升空间"
         category_specific = weakness_map.get(category, "")
-        
+
         if category_specific:
             return f"{category_specific}。{base_weakness}"
         else:
             return base_weakness
-    
+
     def calculate_market_potential(self, product_info: ProductInfo) -> int:
         """计算市场潜力评分（0-100）"""
         score = 50  # 基础分
-        
+
         # 投票数评分
         if product_info.votes > 400:
             score += 20
@@ -454,22 +500,22 @@ class OptimizedProductHuntAnalyzer:
             score += 15
         elif product_info.votes > 100:
             score += 10
-        
+
         # 类别评分
         high_potential_categories = ['AI驱动工具', '开发编程工具', '项目管理工具']
         if product_info.category in high_potential_categories:
             score += 15
-        
+
         # 竞争程度评分
         if len(product_info.competitors) > 0 and len(product_info.competitors) <= 3:
             score += 10  # 适度竞争说明市场验证
-        
+
         # 描述质量评分
         if len(product_info.description) > 100:
             score += 5
-        
+
         return min(score, 100)
-    
+
     def generate_expert_rating(self, score: int) -> str:
         """根据分数生成专家评级"""
         if score >= 90:
@@ -482,35 +528,36 @@ class OptimizedProductHuntAnalyzer:
             return "⭐⭐"
         else:
             return "⭐"
-    
+
     def rank_promising_products(self, products: List[ProductInfo]) -> List[ProductInfo]:
         """优化版产品前景排名"""
         try:
             scored_products = []
-            
+
             for product in products:
                 # 使用市场潜力评分进行排序
                 scored_products.append((product, product.market_potential))
-            
+
             # 按分数排序并返回前3名
             scored_products.sort(key=lambda x: x[1], reverse=True)
             return [product for product, score in scored_products[:3]]
-            
+
         except Exception as e:
             logger.error(f"评估产品前景失败: {str(e)}")
             return products[:3]
-    
-    def generate_enhanced_markdown_report(self, products: List[ProductInfo], promising_products: List[ProductInfo]) -> str:
+
+    def generate_enhanced_markdown_report(self, products: List[ProductInfo],
+                                          promising_products: List[ProductInfo]) -> str:
         """生成优化版Markdown报告（基于Coze格式）"""
         try:
             current_date = datetime.now().strftime("%Y年%m月%d日")
             current_time = datetime.now().strftime("%H:%M:%S")
-            
+
             # 统计信息
             total_votes = sum(p.votes for p in products)
             avg_votes = total_votes // len(products) if products else 0
             categories = list(set(p.category for p in products))
-            
+
             report = f"""# 📊 Product Hunt日报 {current_date.replace('年', '-').replace('月', '-').replace('日', '')}
 
 <div align="center">
@@ -543,7 +590,7 @@ class OptimizedProductHuntAnalyzer:
             # 添加前三名产品（突出显示）
             for i, product in enumerate(products[:3], 1):
                 medals = ['🥇', '🥈', '🥉']
-                report += f"""### {medals[i-1]} 第{i}名: {product.name}
+                report += f"""### {medals[i - 1]} 第{i}名: {product.name}
 
 <div align="center">
 
@@ -597,20 +644,25 @@ class OptimizedProductHuntAnalyzer:
 | 排名 | 产品名称 | 投票数 | 类别 | 专家评级 | 市场潜力 |
 |------|----------|--------|------|----------|----------|
 """
-            
+
             for product in products:
                 report += f"| #{product.rank} | {product.name} | {product.votes}票 | {product.category} | {product.expert_rating} | {product.market_potential}/100 |\n"
-            
+
             report += "\n---\n\n"
-            
+
             # 添加前景产品推荐
             report += f"""## 🌟 最具前景产品TOP3
 
 基于**市场潜力综合评分**，以下3个产品最具投资价值：
 
 """
-            
+
+            # 计算最大投票数以避免除零错误
+            max_votes = max(p.votes for p in products) if products else 1
+            max_votes = max(max_votes, 1)  # 确保至少为1
+
             for i, product in enumerate(promising_products, 1):
+                vote_percentage = (product.votes / max_votes * 100) if max_votes > 0 else 0
                 report += f"""### {i}. {product.name}
 
 <div align="center">
@@ -621,7 +673,7 @@ class OptimizedProductHuntAnalyzer:
 
 #### 📈 投资亮点
 - **市场潜力评分**: {product.market_potential}/100
-- **投票表现**: {product.votes}票，市场认可度{(product.votes / max(p.votes for p in products) * 100):.1f}%
+- **投票表现**: {product.votes}票，市场认可度{vote_percentage:.1f}%
 - **类别优势**: {product.category}赛道前景广阔
 
 #### 🎯 核心价值主张
@@ -639,23 +691,23 @@ class OptimizedProductHuntAnalyzer:
 ---
 
 """
-            
+
             # 添加市场趋势分析
             report += f"""## 📈 市场趋势洞察
 
 ### 🎯 产品类别分布
 
 """
-            
+
             # 统计各类别产品数量
             category_stats = {}
             for product in products:
                 category_stats[product.category] = category_stats.get(product.category, 0) + 1
-            
+
             for category, count in sorted(category_stats.items(), key=lambda x: x[1], reverse=True):
                 percentage = (count / len(products)) * 100
                 report += f"- **{category}**: {count}个产品 ({percentage:.1f}%)\n"
-            
+
             report += f"""
 
 ### 🔥 核心市场洞察
@@ -761,36 +813,36 @@ class OptimizedProductHuntAnalyzer:
 """
 
             return report
-            
+
         except Exception as e:
             logger.error(f"生成Markdown报告失败: {str(e)}")
             return "报告生成失败，请检查日志获取详细信息。"
-    
+
     def run_analysis(self, date: datetime = None) -> str:
         """执行完整的分析流程"""
         try:
             logger.info("🚀 开始优化版Product Hunt产品分析...")
-            
+
             # 1. 获取基础数据
             logger.info("📊 正在获取Product Hunt榜单数据...")
             raw_products = self.fetch_daily_hot(date)
             if not raw_products:
                 logger.error("❌ 未能获取产品数据，分析终止")
                 return "分析失败：无法获取Product Hunt榜单数据"
-            
+
             logger.info(f"✅ 成功获取 {len(raw_products)} 个产品数据")
-            
+
             # 2. 增强产品信息
             logger.info("🧠 开始AI增强产品信息...")
             enhanced_products = []
-            
+
             # 使用线程池并发处理
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 future_to_product = {
-                    executor.submit(self.enhance_product_info, product): product 
+                    executor.submit(self.enhance_product_info, product): product
                     for product in raw_products
                 }
-                
+
                 completed = 0
                 for future in concurrent.futures.as_completed(future_to_product):
                     try:
@@ -800,50 +852,52 @@ class OptimizedProductHuntAnalyzer:
                         logger.info(f"✅ 完成产品增强 {completed}/{len(raw_products)}: {enhanced_product.name}")
                     except Exception as e:
                         logger.error(f"❌ 产品信息增强失败: {str(e)}")
-            
+
             logger.info(f"✅ 完成产品信息增强，共处理 {len(enhanced_products)} 个产品")
-            
+
             # 3. 评估产品前景
             logger.info("⭐ 评估产品投资前景...")
             promising_products = self.rank_promising_products(enhanced_products)
-            
+
             logger.info("🏆 前景产品排名:")
             for i, product in enumerate(promising_products, 1):
                 logger.info(f"  {i}. {product.name} (市场潜力: {product.market_potential}/100)")
-            
+
             # 4. 生成报告
             logger.info("📝 生成优化版分析报告...")
             report = self.generate_enhanced_markdown_report(enhanced_products, promising_products)
-            
+
             # 5. 保存报告
             current_date = datetime.now().strftime("%Y-%m-%d")
             report_filename = f"enhanced_product_hunt_analysis_{current_date}.md"
-            
+
             # 确保reports目录存在
             os.makedirs("reports", exist_ok=True)
             report_path = os.path.join("reports", report_filename)
-            
+
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write(report)
-            
+
             logger.info(f"🎉 分析完成！报告已保存至: {report_path}")
             return report_path
-            
+
         except Exception as e:
             logger.error(f"💥 分析过程失败: {str(e)}")
             return f"分析失败: {str(e)}"
+
 
 def main():
     """主函数"""
     print("🚀 Product Hunt优化版分析系统启动中...")
     print("=" * 60)
-    
+
     analyzer = OptimizedProductHuntAnalyzer()
     result = analyzer.run_analysis()
-    
+
     print("=" * 60)
     print(f"📊 分析结果: {result}")
     print("🎯 系统运行完成！")
+
 
 if __name__ == "__main__":
     main()

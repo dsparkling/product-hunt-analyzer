@@ -18,13 +18,19 @@ from typing import List, Dict, Optional
 import concurrent.futures
 from dataclasses import dataclass, asdict
 import random
+import sys
+import io
 
+# 设置标准输出编码为UTF-8（解决Windows控制台emoji显示问题）
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('product_hunt_analysis.log'),
+        logging.FileHandler('product_hunt_analysis.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
