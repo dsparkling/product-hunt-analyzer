@@ -1,0 +1,81 @@
+{
+  "analysis_config": {
+    "max_products": 10,
+    "analysis_date": "auto",
+    "output_format": "markdown",
+    "language": "zh-CN",
+    "timezone": "Asia/Shanghai"
+  },
+  "github_actions": {
+    "enabled": true,
+    "schedule": "10 8 * * *",
+    "timezone": "UTC",
+    "create_pull_request": true,
+    "commit_changes": true
+  },
+  "scoring_weights": {
+    "innovation": 0.35,
+    "market_demand": 0.40,
+    "business_model": 0.25
+  },
+  "network_settings": {
+    "timeout": 30,
+    "max_retries": 3,
+    "retry_delay": 2,
+    "use_proxy": false,
+    "fallback_to_sample": true
+  },
+  "output_settings": {
+    "save_to_reports": true,
+    "save_to_git": true,
+    "include_images": true,
+    "include_charts": true,
+    "detailed_analysis": true
+  },
+  "keywords": {
+    "innovation": [
+      "ai", "ml", "artificial intelligence", "automation", "blockchain", 
+      "web3", "ar", "vr", "virtual reality", "innovative", 
+      "breakthrough", "revolutionary", "new", "first", "unique"
+    ],
+    "market_demand": [
+      "professional", "business", "enterprise", "team", "collaboration", 
+      "productivity", "efficiency", "workflow", "problem", "challenge", "solution"
+    ],
+    "business_model": [
+      "subscription", "saas", "b2b", "scalable", "sustainable", 
+      "profitable", "monetization", "revenue", "business model"
+    ]
+  },
+  "competitors": {
+    "ai": ["ChatGPT", "Claude", "Midjourney", "Stable Diffusion"],
+    "design": ["Figma", "Sketch", "Adobe XD", "Canva"],
+    "code": ["GitHub", "GitLab", "Bitbucket", "SourceForge"],
+    "project": ["Notion", "Trello", "Asana", "Monday.com"],
+    "chat": ["Slack", "Discord", "Teams", "Zoom"],
+    "marketing": ["HubSpot", "Mailchimp", "Buffer", "Hootsuite"]
+  },
+  "fallback_sample": [
+    {
+      "rank": 1,
+      "name": "Claude 3.5 Sonnet",
+      "description": "Anthropic发布的最新AI助手，在代码理解和生成方面表现卓越",
+      "image_url": "https://cdn.producthunt.com/r/100x100/1010.jpg",
+      "website_url": "https://claude.ai"
+    },
+    {
+      "rank": 2,
+      "name": "Linear",
+      "description": "现代化的项目管理工具，专为开发团队设计",
+      "image_url": "https://cdn.producthunt.com/r/100x100/1001.jpg",
+      "website_url": "https://linear.app"
+    },
+    {
+      "rank": 3,
+      "name": "Notion AI",
+      "description": "Notion集成的AI写作助手，提升文档创作效率",
+      "image_url": "https://cdn.producthunt.com/r/100x100/1002.jpg",
+      "website_url": "https://notion.so"
+    }
+  ]
+}
