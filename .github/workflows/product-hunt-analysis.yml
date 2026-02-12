@@ -1,0 +1,93 @@
+name: Product Hunt Daily Analysis
+
+# 每天下午4点10分自动执行分析
+on:
+  schedule:
+    # UTC时间，每天8:10 AM (北京时间下午4:10)
+    - cron: '10 8 * * *'
+  workflow_dispatch: # 允许手动触发
+    inputs:
+      date:
+        description: '分析日期 (YYYY-MM-DD，留空则分析当天)'
+        required: false
+        default: ''
+
+jobs:
+  analyze-product-hunt:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r code/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+        
+    - name: Run Product Hunt Analysis (Optimized Version)
+      env:
+        ANALYSIS_DATE: ${{ github.event.inputs.date || '' }}
+      run: |
+        cd code
+        # 运行优化版分析器（Coze格式专业报告）
+        python optimized_product_hunt_analyzer.py
+        
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # 添加所有新生成的分析报告
+        git add -A
+        
+        # 如果有变更，则提交
+        if [ -n "$(git status --porcelain)" ]; then
+          git commit -m "Auto-update Product Hunt analysis - $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
+        else
+          echo "No changes to commit"
+        fi
+        
+    - name: Create Pull Request
+      if: success()
+      uses: peter-evans/create-pull-request@v6
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        branch: update-product-hunt-analysis
+        title: "📊 Product Hunt Daily Analysis Update"
+        body: |
+          ## Product Hunt每日分析报告自动更新
+          
+          本PR包含最新的Product Hunt热门产品分析报告：
+          
+          - **分析日期**: ${{ github.event.inputs.date || '今天' }}
+          - **生成时间**: ${{ github.event.head_commit.timestamp }}
+          - **报告文件**: enhanced_product_hunt_analysis_*.md
+          
+          ### 📋 报告包含内容：
+          - 每日Product Hunt热门产品详细分析（15个产品）
+          - 9维度深度分析（核心功能、痛点、受众、竞争等）
+          - 智能产品分类（10大类别）
+          - **量化市场潜力评分**（0-100分）
+          - **专家评级系统**（⭐⭐⭐⭐⭐）
+          - 3个最具前景产品推荐
+          - 市场趋势洞察和投资机会分析
+          - 投资风险提示和控制建议
+          
+          ### 🚀 自动化说明
+          - 每日北京时间下午4:10自动执行
+          - 基于decohack.com最新榜单数据
+          - 使用AI增强分析提供专业洞察
+          - **基于Coze格式的专业投资报告结构**
+          
+          ---
+          *📊 此报告由MiniMax Agent自动化生成*
+        commit-message: "Auto-update Product Hunt analysis - $(date +'%Y-%m-%d')"
+        draft: false
