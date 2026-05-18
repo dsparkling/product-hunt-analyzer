@@ -842,7 +842,7 @@ class OptimizedProductHuntAnalyzer:
 
             # 5. 保存报告
             current_date = datetime.now().strftime("%Y-%m-%d")
-            report_filename = f"product_analysis_{current_date}.md"
+            report_filename = f"{current_date}_product_analysis.md"
 
             # 确保reports目录存在
             os.makedirs("reports", exist_ok=True)
