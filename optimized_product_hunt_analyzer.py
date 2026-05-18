@@ -14,7 +14,7 @@ import time
 import os
 from urllib.parse import urljoin, urlparse
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import concurrent.futures
 from dataclasses import dataclass, asdict
 import random
@@ -87,6 +87,10 @@ class OptimizedProductHuntAnalyzer:
 
         self.base_url = "https://decohack.com/producthunt-daily"
 
+        # 去重信息记录
+        self._raw_products_count = 0
+        self._duplicates = []
+
         # 优化后的分类体系
         self.product_categories = {
             'AI驱动工具': ['ai', 'ml', 'artificial intelligence', 'chatgpt', 'claude'],
@@ -143,6 +147,32 @@ class OptimizedProductHuntAnalyzer:
         yesterday = date - timedelta(days=1)
         date_str = yesterday.strftime("%Y-%m-%d")
         return f"{self.base_url}-{date_str}"
+
+    def deduplicate_products(self, products: List[Dict]) -> Tuple[List[Dict], List[str]]:
+        """按产品链接和名称去重，保留首次出现的有效结果，返回(去重后的产品, 重复项名称列表)"""
+        unique_products = []
+        seen_keys = set()
+        duplicates = []
+
+        for product in products:
+            name = re.sub(r'\s+', ' ', product.get('name', '')).strip().lower()
+            producthunt_url = product.get('producthunt_url', '').strip().lower()
+            website_url = product.get('website_url', '').strip().lower()
+            dedup_key = producthunt_url or f"{name}|{website_url}" or name
+
+            if not dedup_key:
+                continue
+
+            if dedup_key in seen_keys:
+                original_name = product.get('name', '').strip()
+                if original_name and original_name not in duplicates:
+                    duplicates.append(original_name)
+                continue
+
+            seen_keys.add(dedup_key)
+            unique_products.append(product)
+
+        return unique_products, duplicates
 
     def test_connectivity(self) -> bool:
         """测试网络连接性"""
@@ -230,6 +260,14 @@ class OptimizedProductHuntAnalyzer:
                 product_data = self.extract_enhanced_product_info(element, i)
                 if product_data and product_data.get('name'):
                     products.append(product_data)
+
+            # 记录去重前的数量
+            self._raw_products_count = len(products)
+            products, duplicates = self.deduplicate_products(products)
+            self._duplicates = duplicates
+
+            for index, product in enumerate(products, 1):
+                product['rank'] = index
 
             # 如果提取失败，使用示例数据
             if not products:
@@ -547,8 +585,14 @@ class OptimizedProductHuntAnalyzer:
             return products[:3]
 
     def generate_enhanced_markdown_report(self, products: List[ProductInfo],
-                                          promising_products: List[ProductInfo]) -> str:
+                                          promising_products: List[ProductInfo],
+                                          source_daily_url: str = "",
+                                          raw_products_count: int = 0,
+                                          duplicates: List[str] = None) -> str:
         """生成优化版Markdown报告（基于Coze格式）"""
+        if duplicates is None:
+            duplicates = []
+        
         try:
             current_date = datetime.now().strftime("%Y年%m月%d日")
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -558,12 +602,18 @@ class OptimizedProductHuntAnalyzer:
             avg_votes = total_votes // len(products) if products else 0
             categories = list(set(p.category for p in products))
 
+            # 去重信息
+            dedup_info = ""
+            if raw_products_count > 0 and len(products) < raw_products_count:
+                dup_list = ", ".join(duplicates) if duplicates else "未知"
+                dedup_info = f"\n🔄 **去重处理**: 源页标题数 {raw_products_count} / 去重后 {len(products)}\n📋 **重复项**: {dup_list}"
+
             report = f"""# {products[0].name if products else 'Product Hunt'} 日报 {current_date.replace('年', '-').replace('月', '-').replace('日', '')}
 
 🔗 **原文链接**: [Product Hunt每日热门榜单](https://www.producthunt.com/)
 ⏰ **生成时间**: {current_date} {current_time}
 📅 **统计日期**: {current_date.replace('年', '-').replace('月', '-').replace('日', '')}
-🔢 **上榜产品**: {len(products)} 个
+🔢 **上榜产品**: {len(products)} 个{dedup_info}
 
 ## 📋 今日看点
 今天Product Hunt榜单再次展现了技术创新的活力与多样性。从AI驱动的生产力工具到专业化的开发者服务，上榜的产品不仅展示了技术实力，更体现了对用户需求的深度理解。在远程工作常态化和AI技术普及的背景下，这些产品都在尝试解决现代工作场景中的实际痛点。
@@ -782,7 +832,13 @@ class OptimizedProductHuntAnalyzer:
 
             # 4. 生成报告
             logger.info("📝 生成优化版分析报告...")
-            report = self.generate_enhanced_markdown_report(enhanced_products, promising_products)
+            report = self.generate_enhanced_markdown_report(
+                enhanced_products,
+                promising_products,
+                "",
+                self._raw_products_count,
+                self._duplicates
+            )
 
             # 5. 保存报告
             current_date = datetime.now().strftime("%Y-%m-%d")
