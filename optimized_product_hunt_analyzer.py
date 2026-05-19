@@ -222,68 +222,6 @@ class OptimizedProductHuntAnalyzer:
                     logger.info(f"找到 {len(elements)} 个产品元素，使用选择器: {selector}")
                     break
 
-            # 方法2：如果选择器没找到足够产品，使用正则匹配产品标题
-            if not product_elements or len(product_elements) < 10:
-                # 查找所有产品标题（格式：## [数字. 产品名]）
-                product_headings = soup.find_all(string=re.compile(r'^\d+\.\s+'))
-                
-                if product_headings:
-                    products = []
-                    for heading in product_headings[:30]:
-                        # 提取产品名和排名
-                        text = heading.strip()
-                        match = re.search(r'^(\d+)\.\s+(.+)$', text)
-                        if match:
-                            rank = int(match.group(1))
-                            product_name = match.group(2).strip()
-                            
-                            # 找父元素，获取完整信息
-                            parent = heading.find_parent(['div', 'section', 'article'])
-                            if parent:
-                                # 获取描述
-                                desc_elem = parent.find('strong', string='介绍')
-                                description = ""
-                                if desc_elem:
-                                    desc_text = desc_elem.find_next_sibling(string=True)
-                                    if desc_text:
-                                        description = desc_text.strip()
-                                
-                                # 获取票数
-                                votes = 0
-                                vote_elem = parent.find(string=re.compile(r'🔺(\d+)'))
-                                if vote_elem:
-                                    vote_match = re.search(r'🔺(\d+)', vote_elem)
-                                    if vote_match:
-                                        votes = int(vote_match.group(1))
-                                
-                                # 获取链接
-                                link_elem = parent.find('a', href=re.compile(r'producthunt\.com'))
-                                website_url = ""
-                                if link_elem:
-                                    website_url = link_elem.get('href', '')
-                                
-                                product_data = {
-                                    'rank': rank,
-                                    'name': product_name,
-                                    'description': description,
-                                    'votes': votes,
-                                    'category': self.classify_product(product_name + " " + description),
-                                    'image_url': '',
-                                    'website_url': website_url,
-                                    'tagline': description[:50] + "..." if len(description) > 50 else description
-                                }
-                                products.append(product_data)
-                    
-                    if products:
-                        logger.info(f"通过标题分析直接提取 {len(products)} 个产品")
-                        # 直接返回，不需要后续提取
-                        self._raw_products_count = len(products)
-                        products, duplicates = self.deduplicate_products(products)
-                        self._duplicates = duplicates
-                        for index, product in enumerate(products, 1):
-                            product['rank'] = index
-                        return products
-
             # 方法3：查找包含🔺符号的元素（票数）
             if not product_elements or len(product_elements) < 10:
                 vote_elements = soup.find_all(string=lambda text: text and '🔺' in text if text else False)
@@ -302,6 +240,79 @@ class OptimizedProductHuntAnalyzer:
                 product_data = self.extract_enhanced_product_info(element, i)
                 if product_data and product_data.get('name'):
                     products.append(product_data)
+
+            # 如果产品数量少于30，使用方法2重新提取
+            if len(products) < 30:
+                logger.info(f"方法1只提取到 {len(products)} 个产品，使用HTML解析补充...")
+                # 直接查找所有h2标题
+                product_headings = soup.find_all('h2')
+                logger.info(f"找到 {len(product_headings)} 个h2标题")
+                
+                for heading in product_headings[:30]:
+                    text = heading.get_text().strip()
+                    # 匹配格式: [1. 产品名] 或 1. 产品名
+                    match = re.search(r'\[?(\d+)\.?\s+(.+)\]?', text)
+                    if match:
+                        rank = int(match.group(1))
+                        product_name = match.group(2).strip()
+                        
+                        # 找到h2的直接父容器（查找hr或下一个h2之间的内容）
+                        # 方法：找到h2后面到下一个h2之前的所有元素
+                        description = ""
+                        tagline = ""
+                        votes = 0
+                        website_url = ""
+                        
+                        # 获取h2之后的文本内容直到下一个h2
+                        sibling = heading.find_next_sibling()
+                        content_lines = []
+                        while sibling:
+                            if sibling.name == 'h2':
+                                break
+                            if hasattr(sibling, 'get_text'):
+                                content_lines.append(sibling.get_text())
+                            sibling = sibling.find_next_sibling()
+                        
+                        full_content = '\n'.join(content_lines)
+                        
+                        # 提取标语
+                        tag_match = re.search(r'标语[：:]\s*(.+)', full_content)
+                        if tag_match:
+                            tagline = tag_match.group(1).strip()
+                        
+                        # 提取介绍
+                        desc_match = re.search(r'介绍[：:]\s*(.+)', full_content)
+                        if desc_match:
+                            description = desc_match.group(1).strip()
+                        
+                        # 提取票数
+                        vote_match = re.search(r'🔺(\d+)', full_content)
+                        if vote_match:
+                            votes = int(vote_match.group(1))
+                        
+                        # 提取链接
+                        link_match = re.search(r'producthunt\.com/(?:products|posts)/([a-zA-Z0-9_-]+)', full_content)
+                        if link_match:
+                            website_url = f"https://www.producthunt.com/products/{link_match.group(1)}"
+                        
+                        final_tagline = tagline if tagline else (description[:50] + "..." if len(description) > 50 else description)
+                        
+                        product_data = {
+                            'rank': rank,
+                            'name': product_name,
+                            'description': description,
+                            'votes': votes,
+                            'category': self.classify_product(product_name + " " + description),
+                            'image_url': '',
+                            'website_url': website_url,
+                            'tagline': final_tagline
+                        }
+                        
+                        # 检查是否已存在
+                        if not any(p['name'] == product_name for p in products):
+                            products.append(product_data)
+                
+                logger.info(f"方法2补充后共有 {len(products)} 个产品")
 
             # 记录去重前的数量
             self._raw_products_count = len(products)
@@ -665,8 +676,9 @@ class OptimizedProductHuntAnalyzer:
 
 在接下来的分析中，我将为你深入解读每个产品的核心价值、技术亮点和用户反馈，并基于行业数据和市场趋势提供深度分析，希望能为你发现下一个值得关注的产品提供有价值的参考。
 
-            # 添加完整产品深度分析列表 (30个)
-            report += f"""## 🔍 产品深度分析\n\n"""
+## 🔍 产品深度分析
+
+"""
 
             for i, product in enumerate(products, 1):
                 report += f"""### {i}. {product.name}
