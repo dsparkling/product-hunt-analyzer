@@ -222,25 +222,67 @@ class OptimizedProductHuntAnalyzer:
                     logger.info(f"找到 {len(elements)} 个产品元素，使用选择器: {selector}")
                     break
 
-            # 方法2：如果选择器没找到足够产品，尝试按hr分隔获取
+            # 方法2：如果选择器没找到足够产品，使用正则匹配产品标题
             if not product_elements or len(product_elements) < 10:
-                # 查找所有包含产品链接的div/li元素
-                all_links = soup.find_all('a', href=True)
-                product_links = []
-
-                for link in all_links:
-                    href = link.get('href', '')
-                    text = link.get_text().strip()
-                    # 过滤Product Hunt链接
-                    if 'producthunt.com' in href or 'ph/' in href:
-                        if text and len(text) > 2:
-                            parent = link.find_parent(['div', 'li', 'article'])
+                # 查找所有产品标题（格式：## [数字. 产品名]）
+                product_headings = soup.find_all(string=re.compile(r'^\d+\.\s+'))
+                
+                if product_headings:
+                    products = []
+                    for heading in product_headings[:30]:
+                        # 提取产品名和排名
+                        text = heading.strip()
+                        match = re.search(r'^(\d+)\.\s+(.+)$', text)
+                        if match:
+                            rank = int(match.group(1))
+                            product_name = match.group(2).strip()
+                            
+                            # 找父元素，获取完整信息
+                            parent = heading.find_parent(['div', 'section', 'article'])
                             if parent:
-                                product_links.append(parent)
-
-                if product_links:
-                    product_elements = product_links
-                    logger.info(f"通过链接分析找到 {len(product_elements)} 个产品")
+                                # 获取描述
+                                desc_elem = parent.find('strong', string='介绍')
+                                description = ""
+                                if desc_elem:
+                                    desc_text = desc_elem.find_next_sibling(string=True)
+                                    if desc_text:
+                                        description = desc_text.strip()
+                                
+                                # 获取票数
+                                votes = 0
+                                vote_elem = parent.find(string=re.compile(r'🔺(\d+)'))
+                                if vote_elem:
+                                    vote_match = re.search(r'🔺(\d+)', vote_elem)
+                                    if vote_match:
+                                        votes = int(vote_match.group(1))
+                                
+                                # 获取链接
+                                link_elem = parent.find('a', href=re.compile(r'producthunt\.com'))
+                                website_url = ""
+                                if link_elem:
+                                    website_url = link_elem.get('href', '')
+                                
+                                product_data = {
+                                    'rank': rank,
+                                    'name': product_name,
+                                    'description': description,
+                                    'votes': votes,
+                                    'category': self.classify_product(product_name + " " + description),
+                                    'image_url': '',
+                                    'website_url': website_url,
+                                    'tagline': description[:50] + "..." if len(description) > 50 else description
+                                }
+                                products.append(product_data)
+                    
+                    if products:
+                        logger.info(f"通过标题分析直接提取 {len(products)} 个产品")
+                        # 直接返回，不需要后续提取
+                        self._raw_products_count = len(products)
+                        products, duplicates = self.deduplicate_products(products)
+                        self._duplicates = duplicates
+                        for index, product in enumerate(products, 1):
+                            product['rank'] = index
+                        return products
 
             # 方法3：查找包含🔺符号的元素（票数）
             if not product_elements or len(product_elements) < 10:
@@ -608,9 +650,12 @@ class OptimizedProductHuntAnalyzer:
                 dup_list = ", ".join(duplicates) if duplicates else "未知"
                 dedup_info = f"\n🔄 **去重处理**: 源页标题数 {raw_products_count} / 去重后 {len(products)}\n📋 **重复项**: {dup_list}"
 
+            # 原文链接
+            source_link = source_daily_url if source_daily_url else "https://www.producthunt.com/"
+
             report = f"""# {products[0].name if products else 'Product Hunt'} 日报 {current_date.replace('年', '-').replace('月', '-').replace('日', '')}
 
-🔗 **原文链接**: [Product Hunt每日热门榜单](https://www.producthunt.com/)
+🔗 **数据来源**: [decohack每日热门]({source_link})
 ⏰ **生成时间**: {current_date} {current_time}
 📅 **统计日期**: {current_date.replace('年', '-').replace('月', '-').replace('日', '')}
 🔢 **上榜产品**: {len(products)} 个{dedup_info}
@@ -832,10 +877,11 @@ class OptimizedProductHuntAnalyzer:
 
             # 4. 生成报告
             logger.info("📝 生成优化版分析报告...")
+            source_daily_url = self.get_daily_url(date)
             report = self.generate_enhanced_markdown_report(
                 enhanced_products,
                 promising_products,
-                "",
+                source_daily_url,
                 self._raw_products_count,
                 self._duplicates
             )
