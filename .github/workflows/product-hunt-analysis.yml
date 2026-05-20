@@ -3,8 +3,8 @@ name: Product Hunt Daily Analysis
 # 每天下午4点10分自动执行分析
 on:
   schedule:
-    # UTC时间，每天8:10 AM (北京时间下午4:10)
-    - cron: '10 8 * * *'
+    # UTC时间，每天2:10 AM (北京时间上午10:10)
+    - cron: '10 2 * * *'
   workflow_dispatch: # 允许手动触发
     inputs:
       date:
